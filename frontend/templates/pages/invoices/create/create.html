@@ -135,7 +135,7 @@
         <div class="input_card max-w-full min-w-full mt-6">
             <div class="card-body">
                 <div class="flex py-4 gap-x-3">
-                    <button class="btn btn-primary w-1/3">Save for Future Use</button>
+                    <div role="button" class="btn btn-primary w-1/3" onclick="saveBankDetails()">Save for Future Use</div>
                     <div class="dropdown w-2/3">
                         <button class="btn btn-primary w-full">Choose From Saved Details</button>
                         <ul tabindex="0"
@@ -301,6 +301,75 @@
                 pricePerHourInput.value = "";
             }
         });
+
+        function saveBankDetails() {
+
+            const accountHolderName = document.querySelector('input[name="account_holder_name"]');
+            const accountNumber = document.querySelector('input[name="account_number"]');
+            const sortCode = document.querySelector('input[name="sort_code"]');
+
+            // Validate account holder name
+            if (accountHolderName.value.trim() === '') {
+                accountHolderName.classList.add('input-error');
+                accountHolderName.nextElementSibling.classList.remove('hidden');
+                accountHolderName.nextElementSibling.textContent = "Please enter a valid account holder name.";
+                return; // Stop execution if invalid
+            } else {
+                accountHolderName.classList.remove('input-error');
+                accountHolderName.nextElementSibling.classList.add('hidden');
+            }
+
+            // Validate account number
+            accountNumber.value = validate_account_number(accountNumber.value);
+            if (!accountNumber.validity.valid) {
+                accountNumber.classList.add('input-error');
+                accountNumber.nextElementSibling.classList.remove('hidden');
+                accountNumber.nextElementSibling.textContent = "Please enter a valid account number.";
+                return; // Stop execution if invalid
+            } else {
+                accountNumber.classList.remove('input-error');
+                accountNumber.nextElementSibling.classList.add('hidden');
+            }
+
+            // Validate sort code
+            sortCode.value = validate_sort_code(sortCode.value);
+            if (!sortCode.validity.valid) {
+                sortCode.classList.add('input-error');
+                sortCode.nextElementSibling.classList.remove('hidden');
+                sortCode.nextElementSibling.textContent = "Please enter a valid sort code.";
+                return; // Stop execution if invalid
+            } else {
+                sortCode.classList.remove('input-error');
+                sortCode.nextElementSibling.classList.add('hidden');
+            }
+
+            // If all validations pass, proceed to save the details
+            const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+
+            fetch("{% url "invoices:save_bank_details" %}", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRFToken": csrfToken
+                },
+                body: JSON.stringify({
+                    account_holder_name: accountHolderName.value.trim(),
+                    account_number: accountNumber.value.trim(),
+                    sort_code: sortCode.value.trim()
+                })
+            }).then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert('Bank details saved successfully.');
+                } else {
+                    alert('Failed to save bank details.');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('An error occurred while saving bank details.');
+            });
+        }
 
 </script>
 {% endblock content %}

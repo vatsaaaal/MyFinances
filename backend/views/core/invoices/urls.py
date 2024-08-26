@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import schedule, edit, dashboard, create, manage_access, view
+from . import schedule, edit, dashboard, create, manage_access, view, save_bank_details
 
 invoice_urls = [
     path(
@@ -47,6 +47,11 @@ urlpatterns = invoice_urls + [
         create.create_invoice_page,
         name="create",
     ),
+    path(
+        "save-bank-details/",
+        save_bank_details.save_bank_details,
+        name="save_bank_details"
+    )
 ]
 
 app_name = "invoices"
