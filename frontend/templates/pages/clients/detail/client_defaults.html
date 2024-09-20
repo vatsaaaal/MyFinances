@@ -1,4 +1,3 @@
-{% load render_bundle from webpack_loader %}
 <form class="py-4"
       method="POST"
       {% if client %} hx-post="{% url 'api:settings:client_defaults' client_id=client.id %}" {% else %} hx-post="{% url 'api:settings:client_defaults without client' %}" {% endif %}
@@ -208,5 +207,3 @@
               class="loading loading-spinner loading-htmx-loader"></span>
     </button>
 </form>
-{% render_bundle 'validate_payment_details' 'js' %}
-{% render_bundle 'bank_details_dropdown' 'js' %}

@@ -1,3 +1,5 @@
+import './validate_payment_details';
+import './bank_details_dropdown'
 import Alpine from 'alpinejs'
 import $ from 'jquery'
 

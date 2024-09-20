@@ -1,6 +1,5 @@
 {% load static %}
 {% load markdownify %}
-{% load render_bundle from webpack_loader %}
 <form method="post"
       class="card bg-base-100 p-6 group"
       enctype="multipart/form-data">
@@ -53,8 +52,6 @@
     <button class="btn btn-primary group-invalid:btn-disabled btn-block">Create Invoice</button>
 </div>
 </form>
-{% render_bundle 'validate_payment_details' 'js' %}
-{% render_bundle 'bank_details_dropdown' 'js' %}
 <script>
 
     function checkDueDate() {
