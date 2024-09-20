@@ -59,7 +59,7 @@ urlpatterns = [
     path("recurring/", include((RECURRING_INVOICE_URLS, "recurring"), namespace="recurring")),
     path("create/", include((CREATE_INVOICE_URLS, "create"), namespace="create")),
     path("get_bank_details/", bank_details.get_bank_details, name="get_bank_details"),
-    path("delete_bank_detail/<int:bank_detail_id>/", bank_details.delete_bank_detail, name='delete_bank_detail')
+    path("delete_bank_detail/<int:bank_detail_id>/", bank_details.delete_bank_detail, name="delete_bank_detail"),
 ]
 
 app_name = "invoices"

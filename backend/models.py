@@ -375,6 +375,7 @@ class Client(OwnerBase):
         else:
             return self.user == user
 
+
 class BankDetail(models.Model):
     account_holder_name = models.CharField(max_length=100)
     account_number = models.CharField(max_length=16)
@@ -382,6 +383,7 @@ class BankDetail(models.Model):
 
     def __str__(self):
         return f"{self.account_holder_name} - {self.account_number}"
+
 
 class DefaultValues(OwnerBase):
     class InvoiceDueDateType(models.TextChoices):
@@ -395,7 +397,7 @@ class DefaultValues(OwnerBase):
 
     client = models.OneToOneField(Client, on_delete=models.CASCADE, related_name="default_values", null=True, blank=True)
 
-    bank_details = models.ManyToManyField(BankDetail, blank=True, related_name='default_values')
+    bank_details = models.ManyToManyField(BankDetail, blank=True, related_name="default_values")
 
     currency = models.CharField(
         max_length=3,
