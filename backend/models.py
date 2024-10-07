@@ -19,6 +19,12 @@ from django.utils.crypto import get_random_string
 from shortuuid.django_fields import ShortUUIDField
 from storages.backends.s3 import S3Storage
 
+from backend.data.default_email_templates import (
+    recurring_invoices_invoice_created_default_email_template,
+    recurring_invoices_invoice_overdue_default_email_template,
+    recurring_invoices_invoice_cancelled_default_email_template,
+)
+
 from backend.managers import InvoiceRecurringProfile_WithItemsManager
 
 
@@ -95,12 +101,72 @@ class User(AbstractUser):
 
     role = models.CharField(max_length=10, choices=Role.choices, default=Role.USER)
 
+    @property
+    def name(self):
+        return self.first_name
+
 
 def add_3hrs_from_now():
     return timezone.now() + timezone.timedelta(hours=3)
 
 
-class VerificationCodes(models.Model):
+class ActiveManager(models.Manager):
+    """Manager to return only active objects."""
+
+    def get_queryset(self):
+        return super().get_queryset().filter(active=True)
+
+
+class ExpiredManager(models.Manager):
+    """Manager to return only expired (inactive) objects."""
+
+    def get_queryset(self):
+        now = timezone.now()
+        return super().get_queryset().filter(expires__isnull=False, expires__lte=now)
+
+
+class ExpiresBase(models.Model):
+    """Base model for handling expiration logic."""
+
+    expires = models.DateTimeField("Expires", null=True, blank=True, help_text="When the item will expire")
+    active = models.BooleanField(default=True)
+
+    # Default manager that returns only active items
+    objects = ActiveManager()
+
+    # Custom manager to get expired/inactive objects
+    expired_objects = ExpiredManager()
+
+    # Fallback All objects
+    all_objects = models.Manager()
+
+    def deactivate(self) -> None:
+        """Manually deactivate the object."""
+        self.active = False
+        self.save()
+
+    def delete_if_expired_for(self, days: int = 14) -> bool:
+        """Delete the object if it has been expired for a certain number of days."""
+        if self.expires and self.expires <= timezone.now() - timedelta(days=days):
+            self.delete()
+            return True
+        return False
+
+    @property
+    def remaining_active_time(self):
+        """Return the remaining time until expiration, or None if already expired or no expiration set."""
+        if self.expires and self.expires > timezone.now():
+            return self.expires - timezone.now()
+        return None
+
+    def is_active(self):
+        return self.active
+
+    class Meta:
+        abstract = True
+
+
+class VerificationCodes(ExpiresBase):
     class ServiceTypes(models.TextChoices):
         CREATE_ACCOUNT = "create_account", "Create Account"
         RESET_PASSWORD = "reset_password", "Reset Password"
@@ -110,17 +176,10 @@ class VerificationCodes(models.Model):
 
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     created = models.DateTimeField(auto_now_add=True)
-    expiry = models.DateTimeField(default=add_3hrs_from_now)
     service = models.CharField(max_length=14, choices=ServiceTypes.choices)
 
     def __str__(self):
         return self.user.username
-
-    def is_expired(self):
-        if timezone.now() > self.expiry:
-            self.delete()
-            return True
-        return False
 
     def hash_token(self):
         self.token = make_password(self.token)
@@ -137,6 +196,7 @@ class UserSettings(models.Model):
         INVOICES = "invoices", "Invoices"
         RECEIPTS = "receipts", "Receipts"
         EMAIL_SENDING = "email_sending", "Email Sending"
+        MONTHLY_REPORTS = "monthly_reports", "Monthly Reports"
 
     CURRENCIES = {
         "GBP": {"name": "British Pound Sterling", "symbol": "£"},
@@ -215,29 +275,22 @@ class TeamMemberPermission(models.Model):
         unique_together = ("team", "user")
 
 
-class TeamInvitation(models.Model):
+class TeamInvitation(ExpiresBase):
     code = models.CharField(max_length=10)
     team = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="team_invitations")
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="team_invitations")
     invited_by = models.ForeignKey(User, on_delete=models.CASCADE)
-    expires = models.DateTimeField(null=True, blank=True)
-    active = models.BooleanField(default=True)
 
     def is_active(self):
-        if not self.active:
-            return False
-        if timezone.now() > self.expires:
-            self.active = False
-            self.save()
-            return False
-        return True
+        return self.active
 
     def set_expires(self):
-        self.expires = timezone.now() + timezone.timedelta(days=7)
+        self.expires = timezone.now() + timezone.timedelta(days=14)
 
     def save(self, *args, **kwargs):
-        self.set_expires()
-        self.code = RandomCode(10)
+        if not self.code:
+            self.code = RandomCode(10)
+            self.set_expires()
         super().save()
 
     def __str__(self):
@@ -417,10 +470,17 @@ class DefaultValues(OwnerBase):
     invoice_from_city = models.CharField(max_length=100, null=True, blank=True)
     invoice_from_county = models.CharField(max_length=100, null=True, blank=True)
     invoice_from_country = models.CharField(max_length=100, null=True, blank=True)
+    invoice_from_email = models.CharField(max_length=100, null=True, blank=True)
 
     invoice_account_number = models.CharField(max_length=100, null=True, blank=True)
     invoice_sort_code = models.CharField(max_length=100, null=True, blank=True)
     invoice_account_holder_name = models.CharField(max_length=100, null=True, blank=True)
+
+    email_template_recurring_invoices_invoice_created = models.TextField(default=recurring_invoices_invoice_created_default_email_template)
+    email_template_recurring_invoices_invoice_overdue = models.TextField(default=recurring_invoices_invoice_overdue_default_email_template)
+    email_template_recurring_invoices_invoice_cancelled = models.TextField(
+        default=recurring_invoices_invoice_cancelled_default_email_template
+    )
 
     def get_issue_and_due_dates(self, issue_date: date | str | None = None) -> tuple[str, str]:
         due: date
@@ -577,14 +637,15 @@ class Invoice(InvoiceBase):
     # objects = InvoiceManager()
 
     STATUS_CHOICES = (
+        ("draft", "Draft"),
+        # ("ready", "Ready"),
         ("pending", "Pending"),
         ("paid", "Paid"),
-        ("overdue", "Overdue"),
     )
 
     invoice_id = models.IntegerField(unique=True, blank=True, null=True)  # todo: add
     date_due = models.DateField()
-    payment_status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="pending")
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="draft")
     invoice_recurring_profile = models.ForeignKey(
         "InvoiceRecurringProfile", related_name="generated_invoices", on_delete=models.SET_NULL, blank=True, null=True
     )
@@ -601,11 +662,15 @@ class Invoice(InvoiceBase):
         return f"Invoice #{invoice_id} for {client}"
 
     @property
-    def dynamic_payment_status(self):
-        if self.date_due and timezone.now().date() > self.date_due and self.payment_status == "pending":
+    def dynamic_status(self):
+        if self.status == "pending" and self.is_overdue:
             return "overdue"
         else:
-            return self.payment_status
+            return self.status
+
+    @property
+    def is_overdue(self):
+        return self.date_due and timezone.now().date() > self.date_due
 
     @property
     def get_to_details(self) -> tuple[str, dict[str, str | None]] | tuple[str, Client]:
@@ -617,10 +682,7 @@ class Invoice(InvoiceBase):
         if self.client_to:
             return "client", self.client_to
         else:
-            return "manual", {
-                "name": self.client_name,
-                "company": self.client_company,
-            }
+            return "manual", {"name": self.client_name, "company": self.client_company, "email": self.client_email}
 
     def get_subtotal(self) -> Decimal:
         subtotal = 0
@@ -724,32 +786,22 @@ class InvoiceRecurringProfile(InvoiceBase, BotoSchedule):
                 return from_date + timedelta(days=7)
 
 
-class InvoiceURL(models.Model):
+class InvoiceURL(ExpiresBase):
     uuid = ShortUUIDField(length=8, primary_key=True)
     invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name="invoice_urls")
     created_by = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True)
     system_created = models.BooleanField(default=False)
     created_on = models.DateTimeField(auto_now_add=True)
-    expires = models.DateTimeField(null=True, blank=True)
-    never_expire = models.BooleanField(default=False)
-    active = models.BooleanField(default=True)
 
-    def is_active(self):
-        if not self.active:
-            return False
-        if timezone.now() > self.expires:
-            self.active = False
-            self.save()
-            return False
-        return True
+    @property
+    def get_created_by(self):
+        if self.created_by:
+            return self.created_by.first_name or f"USR #{self.created_by.id}"
+        else:
+            return "SYSTEM"
 
     def set_expires(self):
         self.expires = timezone.now() + timezone.timedelta(days=7)
-
-    def save(self, *args, **kwargs):
-        if not self.never_expire:
-            self.set_expires()
-        super().save()
 
     def __str__(self):
         return str(self.invoice.id)
@@ -818,33 +870,9 @@ class MonthlyReport(OwnerBase):
         return UserSettings.CURRENCIES.get(self.currency, {}).get("symbol", "$")
 
 
-class APIKey(models.Model):
-    class ServiceTypes(models.TextChoices):
-        AWS_API_DESTINATION = "aws_api_destination"
-
-    service = models.CharField(max_length=20, choices=ServiceTypes.choices, null=True)
-    key = models.CharField(max_length=100, default=RandomAPICode)
-    last_used = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        verbose_name = "API Key"
-        verbose_name_plural = "API Keys"
-
-    def __str__(self):
-        return self.service
-
-    def verify(self, key):
-        return check_password(key, self.key)
-
-    def hash(self):
-        self.key = make_password(f"{self.id}:{self.key}")
-        self.save()
-
-
-class PasswordSecret(models.Model):
+class PasswordSecret(ExpiresBase):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="password_secrets")
     secret = models.TextField(max_length=300)
-    expires = models.DateTimeField(null=True, blank=True)
 
 
 class Notification(models.Model):

@@ -34,6 +34,7 @@ def edit_invoice(request: HtmxHttpRequest):
         "date_issued": request.POST.get("date_issued"),
         "client_name": request.POST.get("to_name"),
         "client_company": request.POST.get("to_company"),
+        "client_email": request.POST.get("to_email"),
         "client_address": request.POST.get("to_address"),
         "client_city": request.POST.get("to_city"),
         "client_county": request.POST.get("to_county"),
@@ -88,22 +89,14 @@ def change_status(request: HtmxHttpRequest, invoice_id: int, status: str) -> Htt
     if request.user.logged_in_as_team and request.user.logged_in_as_team != invoice.organization or request.user != invoice.user:
         return return_message(request, "You don't have permission to make changes to this invoice.")
 
-    if status not in ["paid", "overdue", "pending"]:
-        return return_message(request, "Invalid status. Please choose from: pending, paid, overdue")
+    if status not in ["paid", "draft", "pending"]:
+        return return_message(request, "Invalid status. Please choose from: pending, paid, draft")
 
-    if invoice.payment_status == status:
+    if invoice.status == status:
         return return_message(request, f"Invoice status is already {status}")
 
-    invoice.payment_status = status
+    invoice.status = status
     invoice.save()
-
-    dps = invoice.dynamic_payment_status
-    if (status == "overdue" and dps == "pending") or (status == "pending" and dps == "overdue"):
-        message = f"""
-            The invoice status was automatically changed from <strong>{status}</strong> to <strong>{dps}</strong>
-            as the invoice dates override the manual status.
-        """
-        return return_message(request, message, success=False)
 
     send_message(request, f"Invoice status been changed to <strong>{status}</strong>", success=True)
 
